@@ -39,7 +39,7 @@ func FetchMovies() ([]models.Movie, error) {
 			Title:       m.Title,
 			Description: m.Overview,
 			ReleaseDate: releaseDate,
-			Rating:      m.VoteAverage,
+			Rating:      float64(m.VoteAverage),
 			CreatedAt:   time.Now(),
 			UpdatedAt:   time.Now(),
 		})

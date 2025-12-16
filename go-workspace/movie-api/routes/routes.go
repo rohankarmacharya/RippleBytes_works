@@ -1,6 +1,8 @@
 package routes
 
 import (
+	"time"
+
 	"github.com/gofiber/fiber/v2"
 	"github.com/rohankarmacharya/movie-lib/client"
 	"github.com/rohankarmacharya/movie-lib/models"
@@ -49,18 +51,48 @@ func MovieRoutes(app *fiber.App) {
 	})
 
 	app.Post("/movies", func(c *fiber.Ctx) error {
-		movie := new(models.Movie)
-		if err := c.BodyParser(movie); err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": "Cannot parse JSON"})
+		// Parse the request body
+		var movieInput struct {
+			ExternalID  string  `json:"external_id"`
+			Title       string  `json:"title"`
+			Description string  `json:"description"`
+			ReleaseDate string  `json:"release_date"`
+			Rating      float64 `json:"rating"`
 		}
 
-		err := repository.CreateOrUpdateMovie(*movie)
+		if err := c.BodyParser(&movieInput); err != nil {
+			return c.Status(400).JSON(fiber.Map{
+				"error":   "Invalid request body",
+				"details": err.Error(),
+			})
+		}
+
+		// Parse the date
+		releaseDate, err := time.Parse("2006-01-02", movieInput.ReleaseDate)
 		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+			return c.Status(400).JSON(fiber.Map{
+				"error": "Invalid date format. Use YYYY-MM-DD",
+			})
+		}
+
+		// Create the movie
+		movie := models.Movie{
+			ExternalID:  movieInput.ExternalID,
+			Title:       movieInput.Title,
+			Description: movieInput.Description,
+			ReleaseDate: releaseDate,
+			Rating:      movieInput.Rating,
+		}
+
+		// Save to database
+		if err := repository.CreateOrUpdateMovie(movie); err != nil {
+			return c.Status(500).JSON(fiber.Map{
+				"error":   "Failed to save movie",
+				"details": err.Error(),
+			})
 		}
 
 		return c.Status(201).JSON(movie)
-
 	})
 	app.Get("/movies/sync", func(c *fiber.Ctx) error {
 		syncedCount, err := client.SyncWithAPI()

@@ -1,43 +1,21 @@
 package repository
 
 import (
-	"context"
+	"errors"
+	"time"
 
 	"github.com/rohankarmacharya/movie-lib/config"
 	"github.com/rohankarmacharya/movie-lib/models"
+	"gorm.io/gorm"
 )
 
 // GetAllMovies retrieves all movies from the database
 func GetAllMovies() ([]models.Movie, error) {
-	db := config.DB
-	rows, err := db.Query(context.Background(),
-		`SELECT id, external_id, title, description, release_date, rating, created_at, updated_at 
-        FROM movies ORDER BY created_at DESC`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
 	var movies []models.Movie
-	for rows.Next() {
-		var m models.Movie
-		err := rows.Scan(
-			&m.ID,
-			&m.ExternalID,
-			&m.Title,
-			&m.Description,
-			&m.ReleaseDate,
-			&m.Rating,
-			&m.CreatedAt,
-			&m.UpdatedAt,
-		)
-		if err != nil {
-			return nil, err
-		}
-		movies = append(movies, m)
-	}
-
-	if err = rows.Err(); err != nil {
+	err := config.DB.
+		Order("created_at DESC").
+		Find(&movies).Error
+	if err != nil {
 		return nil, err
 	}
 
@@ -60,20 +38,10 @@ func SaveMovies(movies []models.Movie) (int, error) {
 
 // GetMovieByID retrieves a single movie by its ID
 func GetMovieByID(id string) (*models.Movie, error) {
-	db := config.DB
 	var movie models.Movie
-	err := db.QueryRow(context.Background(),
-		`SELECT id, external_id, title, description, release_date, rating, created_at, updated_at 
-        FROM movies WHERE id = $1`, id).Scan(
-		&movie.ID,
-		&movie.ExternalID,
-		&movie.Title,
-		&movie.Description,
-		&movie.ReleaseDate,
-		&movie.Rating,
-		&movie.CreatedAt,
-		&movie.UpdatedAt,
-	)
+	err := config.DB.Model(&models.Movie{}).
+		Where("id = ?", id).
+		First(&movie).Error
 
 	if err != nil {
 		return nil, err
@@ -84,28 +52,31 @@ func GetMovieByID(id string) (*models.Movie, error) {
 
 // CreateOrUpdateMovie creates a new movie or updates it if it already exists
 func CreateOrUpdateMovie(movie models.Movie) error {
-	db := config.DB
-	_, err := db.Exec(context.Background(),
-		`INSERT INTO movies (external_id, title, description, release_date, rating, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)
-		ON CONFLICT (external_id) 
-		DO UPDATE SET 
-			title = EXCLUDED.title,
-			description = EXCLUDED.description,
-			release_date = EXCLUDED.release_date,
-			rating = EXCLUDED.rating,
-			updated_at = EXCLUDED.updated_at`,
-		movie.ExternalID, movie.Title, movie.Description, movie.ReleaseDate, movie.Rating, movie.CreatedAt, movie.UpdatedAt,
-	)
-	return err
+	// Check if movie with external_id already exists
+	var existingMovie models.Movie
+	result := config.DB.Where("external_id = ?", movie.ExternalID).First(&existingMovie)
+
+	if result.Error == nil {
+		// Movie exists, update it
+		movie.ID = existingMovie.ID
+		movie.CreatedAt = existingMovie.CreatedAt
+		movie.UpdatedAt = time.Now()
+		return config.DB.Save(&movie).Error
+	} else if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+		// Movie doesn't exist, create new
+		movie.CreatedAt = time.Now()
+		movie.UpdatedAt = time.Now()
+		return config.DB.Create(&movie).Error
+	} else {
+		// Some other error occurred
+		return result.Error
+	}
 }
 
 // GetTotalMoviesCount returns the total number of movies in the database
-func GetTotalMoviesCount() (int, error) {
-	db := config.DB
-	var count int
-	err := db.QueryRow(context.Background(), "SELECT COUNT(*) FROM movies").Scan(&count)
-	if err != nil {
+func GetTotalMoviesCount() (int64, error) {
+	var count int64
+	if err := config.DB.Model(&models.Movie{}).Count(&count).Error; err != nil {
 		return 0, err
 	}
 

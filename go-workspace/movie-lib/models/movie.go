@@ -3,12 +3,12 @@ package models
 import "time"
 
 type Movie struct {
-	ID          int       `json:"id" db:"id"`
-	ExternalID  string    `json:"external_id" db:"external_id"`
-	Title       string    `json:"title" db:"title"`
-	Description string    `json:"description" db:"description"`
-	ReleaseDate time.Time `json:"release_date" db:"release_date"`
-	Rating      float64   `json:"rating" db:"rating"`
-	CreatedAt   time.Time `json:"CreatedAt" db:"created_at"`
-	UpdatedAt   time.Time `json:"UpdatedAt" db:"updated_at"`
+	ID          uint      `json:"id" gorm:"primaryKey"`
+	ExternalID  string    `json:"external_id" gorm:"uniqueIndex:idx_external_id"`
+	Title       string    `json:"title" gorm:"not null"`
+	Description string    `json:"description,omitempty"`
+	ReleaseDate time.Time `json:"release_date" time_format:"2006-01-02"`
+	Rating      float64   `json:"rating,omitempty"`
+	CreatedAt   time.Time `json:"created_at,omitempty"`
+	UpdatedAt   time.Time `json:"updated_at,omitempty"`
 }
