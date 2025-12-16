@@ -1,20 +1,40 @@
 package main
 
 import (
-	"fmt"
+	"encoding/json"
+	"log"
+
+	"movie-api/routes"
+
+	"github.com/rohankarmacharya/movie-lib/config"
+	"github.com/rohankarmacharya/movie-lib/models"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/rohankarmacharya/movie-api/routes"
-	"github.com/rohankarmacharya/movie-lib/config"
 )
 
 func main() {
-	config.ConnectDB() // connect to Postgres
-	fmt.Println("Database connected successfully!")
+	// Initialize database
+	config.ConnectDB() // Make sure this sets up the DB connection
+	db, err := config.DB.DB()
+	if err != nil {
+		log.Fatalf("Failed to get database instance: %v", err)
+	}
+	defer db.Close()
 
-	app := fiber.New()
+	// Auto migrate models
+	if err := config.DB.AutoMigrate(&models.Movie{}); err != nil {
+		log.Fatalf("Failed to migrate database: %v", err)
+	}
 
+	// Create Fiber app
+	app := fiber.New(fiber.Config{
+		JSONEncoder: json.Marshal,
+		JSONDecoder: json.Unmarshal,
+	})
+
+	// Setup routes
 	routes.MovieRoutes(app)
 
-	app.Listen(":3000")
+	// Start server
+	log.Fatal(app.Listen(":3000"))
 }

@@ -1,84 +1,150 @@
 package repository
 
 import (
-	"errors"
 	"time"
 
 	"github.com/rohankarmacharya/movie-lib/config"
 	"github.com/rohankarmacharya/movie-lib/models"
 	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
+
+// CreateMovie creates a new movie
+func CreateMovie(movie *models.Movie) error {
+	// Upsert by external_id: insert or update core fields on conflict
+	return config.DB.
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "external_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"title", "description", "poster_path", "release_date", "rating", "updated_at"}),
+		}).
+		Create(movie).Error
+}
+
+// SaveMovies saves multiple movies to the database and returns the count of saved movies
+func SaveMovies(movies []models.Movie) (int64, error) {
+	// Bulk upsert by external_id
+	result := config.DB.
+		Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "external_id"}},
+			DoUpdates: clause.AssignmentColumns([]string{"title", "description", "poster_path", "release_date", "rating", "updated_at"}),
+		}).
+		Create(&movies)
+	return result.RowsAffected, result.Error
+}
+
+// GetMovieByID gets a movie by ID
+func GetMovieByID(id uint) (*models.Movie, error) {
+	var movie models.Movie
+	err := config.DB.First(&movie, id).Error
+	if err != nil {
+		return nil, err
+	}
+	return &movie, nil
+}
+
+// UpdateMovie updates an existing movie
+func UpdateMovie(movie *models.Movie) error {
+	result := config.DB.Save(movie)
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return result.Error
+}
+
+// DeleteMovie deletes a movie by ID
+func DeleteMovie(id uint) error {
+	result := config.DB.Delete(&models.Movie{}, id)
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return result.Error
+}
 
 // GetAllMovies retrieves all movies from the database
 func GetAllMovies() ([]models.Movie, error) {
 	var movies []models.Movie
-	err := config.DB.
-		Order("created_at DESC").
-		Find(&movies).Error
+	err := config.DB.Find(&movies).Error
 	if err != nil {
 		return nil, err
 	}
-
 	return movies, nil
 }
 
-// SaveMovies saves multiple movies to the database
-// Returns the number of successfully saved movies and any error that occurred
-func SaveMovies(movies []models.Movie) (int, error) {
-	savedCount := 0
-	for _, m := range movies {
-		err := CreateOrUpdateMovie(m)
-		if err != nil {
-			return savedCount, err
-		}
-		savedCount++
-	}
-	return savedCount, nil
-}
-
-// GetMovieByID retrieves a single movie by its ID
-func GetMovieByID(id string) (*models.Movie, error) {
+// GetMovieByTitleAndDate finds a movie by its title and release date
+func GetMovieByTitleAndDate(title string, releaseDate time.Time) (*models.Movie, error) {
 	var movie models.Movie
-	err := config.DB.Model(&models.Movie{}).
-		Where("id = ?", id).
-		First(&movie).Error
-
+	err := config.DB.Where("title = ? AND release_date = ?", title, releaseDate).First(&movie).Error
 	if err != nil {
+		if err == gorm.ErrRecordNotFound {
+			return nil, nil
+		}
 		return nil, err
 	}
-
 	return &movie, nil
 }
 
-// CreateOrUpdateMovie creates a new movie or updates it if it already exists
-func CreateOrUpdateMovie(movie models.Movie) error {
-	// Check if movie with external_id already exists
-	var existingMovie models.Movie
-	result := config.DB.Where("external_id = ?", movie.ExternalID).First(&existingMovie)
+// GetMoviesWithPagination retrieves movies with filtering, searching, and pagination
+func GetMoviesWithPagination(params models.MovieQueryParams) (*models.PaginatedResponse, error) {
+	var movies []models.Movie
+	var total int64
 
-	if result.Error == nil {
-		// Movie exists, update it
-		movie.ID = existingMovie.ID
-		movie.CreatedAt = existingMovie.CreatedAt
-		movie.UpdatedAt = time.Now()
-		return config.DB.Save(&movie).Error
-	} else if errors.Is(result.Error, gorm.ErrRecordNotFound) {
-		// Movie doesn't exist, create new
-		movie.CreatedAt = time.Now()
-		movie.UpdatedAt = time.Now()
-		return config.DB.Create(&movie).Error
-	} else {
-		// Some other error occurred
-		return result.Error
-	}
-}
+	// Start building the query
+	query := config.DB.Model(&models.Movie{})
 
-// GetTotalMoviesCount returns the total number of movies in the database
-func GetTotalMoviesCount() (int64, error) {
-	var count int64
-	if err := config.DB.Model(&models.Movie{}).Count(&count).Error; err != nil {
-		return 0, err
+	// Apply search (case-insensitive search in title and description)
+	if params.Search != "" {
+		searchTerm := "%" + params.Search + "%"
+		query = query.Where("LOWER(title) LIKE LOWER(?) OR LOWER(description) LIKE LOWER(?)",
+			searchTerm, searchTerm)
 	}
 
-	return count, nil
+	// Apply rating filters
+	if params.MinRating != nil {
+		query = query.Where("rating >= ?", *params.MinRating)
+	}
+	if params.MaxRating != nil {
+		query = query.Where("rating <= ?", *params.MaxRating)
+	}
+
+	// Apply release date filters (parse strings as YYYY-MM-DD, ignore invalid formats)
+	if params.ReleaseFrom != "" {
+		if from, err := time.Parse("2006-01-02", params.ReleaseFrom); err == nil {
+			query = query.Where("release_date >= ?", from)
+		}
+	}
+	if params.ReleaseTo != "" {
+		if to, err := time.Parse("2006-01-02", params.ReleaseTo); err == nil {
+			endOfDay := to.Add(24 * time.Hour)
+			query = query.Where("release_date < ?", endOfDay)
+		}
+	}
+
+	// Get total count for pagination
+	if err := query.Count(&total).Error; err != nil {
+		return nil, err
+	}
+
+	// Calculate pagination
+	offset := (params.Page - 1) * params.Limit
+	totalPages := int((total + int64(params.Limit) - 1) / int64(params.Limit))
+
+	// Apply pagination and ordering
+	if err := query.
+		Order("created_at DESC").
+		Offset(offset).
+		Limit(params.Limit).
+		Find(&movies).Error; err != nil {
+		return nil, err
+	}
+
+	// Build the response
+	response := &models.PaginatedResponse{
+		Data:       movies,
+		Total:      total,
+		Page:       params.Page,
+		Limit:      params.Limit,
+		TotalPages: totalPages,
+	}
+
+	return response, nil
 }

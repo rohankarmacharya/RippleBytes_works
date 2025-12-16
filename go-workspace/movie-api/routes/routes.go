@@ -1,116 +1,43 @@
 package routes
 
 import (
-	"time"
+	"movie-api/handlers"
 
 	"github.com/gofiber/fiber/v2"
-	"github.com/rohankarmacharya/movie-lib/client"
-	"github.com/rohankarmacharya/movie-lib/models"
-	"github.com/rohankarmacharya/movie-lib/repository"
 )
 
+// MovieRoutes configures all the movie-related routes
 func MovieRoutes(app *fiber.App) {
-	app.Get("/movies", func(c *fiber.Ctx) error {
-		movies, err := repository.GetAllMovies()
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
+	// API v1 routes
+	api := app.Group("/api")
+	{
+		// Movie routes
+		movies := api.Group("/movies")
+		{
+			// Get all movies with filtering and pagination
+			movies.Get("/", handlers.GetMovies)
+
+			// Get single movie by ID
+			movies.Get("/:id", handlers.GetMovie)
+
+			// Create new movie
+			movies.Post("/", handlers.CreateMovie)
+
+			// Sync movies from TMDB and store in DB
+			movies.Post("/sync", handlers.SyncMovies)
+
+			// Update existing movie
+			movies.Put("/:id", handlers.UpdateMovie)
+
+			// Delete movie
+			movies.Delete("/:id", handlers.DeleteMovie)
+
+			// TMDB integration routes
+			tmdb := api.Group("/tmdb")
+			{
+				tmdb.Get("/movies/search", handlers.SearchTMDBMovies)
+				tmdb.Get("/movies/:id", handlers.GetTMDBMovieDetails)
+			}
 		}
-		return c.JSON(movies)
-	})
-
-	app.Get("movies/:id", func(c *fiber.Ctx) error {
-		id := c.Params("id")
-		movie, err := repository.GetMovieByID(id)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-		return c.JSON(movie)
-	})
-
-	app.Post("/movies/sync", func(c *fiber.Ctx) error {
-		movies, err := client.FetchMovies()
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		syncedCount, err := repository.SaveMovies(movies)
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		totalCount, err := repository.GetTotalMoviesCount()
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		return c.JSON(fiber.Map{
-			"message":      "Movies synced successfully",
-			"synced_count": syncedCount,
-			"total_movies": totalCount,
-		})
-	})
-
-	app.Post("/movies", func(c *fiber.Ctx) error {
-		// Parse the request body
-		var movieInput struct {
-			ExternalID  string  `json:"external_id"`
-			Title       string  `json:"title"`
-			Description string  `json:"description"`
-			ReleaseDate string  `json:"release_date"`
-			Rating      float64 `json:"rating"`
-		}
-
-		if err := c.BodyParser(&movieInput); err != nil {
-			return c.Status(400).JSON(fiber.Map{
-				"error":   "Invalid request body",
-				"details": err.Error(),
-			})
-		}
-
-		// Parse the date
-		releaseDate, err := time.Parse("2006-01-02", movieInput.ReleaseDate)
-		if err != nil {
-			return c.Status(400).JSON(fiber.Map{
-				"error": "Invalid date format. Use YYYY-MM-DD",
-			})
-		}
-
-		// Create the movie
-		movie := models.Movie{
-			ExternalID:  movieInput.ExternalID,
-			Title:       movieInput.Title,
-			Description: movieInput.Description,
-			ReleaseDate: releaseDate,
-			Rating:      movieInput.Rating,
-		}
-
-		// Save to database
-		if err := repository.CreateOrUpdateMovie(movie); err != nil {
-			return c.Status(500).JSON(fiber.Map{
-				"error":   "Failed to save movie",
-				"details": err.Error(),
-			})
-		}
-
-		return c.Status(201).JSON(movie)
-	})
-	app.Get("/movies/sync", func(c *fiber.Ctx) error {
-		syncedCount, err := client.SyncWithAPI()
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		// Get total count from DB
-		totalCount, err := repository.GetTotalMoviesCount()
-		if err != nil {
-			return c.Status(500).JSON(fiber.Map{"error": err.Error()})
-		}
-
-		return c.JSON(fiber.Map{
-			"synced_count": syncedCount, // movies synced from TMDB
-			"total_count":  totalCount,  // total movies in DB now
-			"message":      "Movies synced successfully!",
-		})
-	})
-
+	}
 }

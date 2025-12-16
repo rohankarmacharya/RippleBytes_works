@@ -23,7 +23,7 @@ func SyncWithAPI() (int, error) {
 	}
 
 	fmt.Printf("Successfully synced %d movies!\n", syncedCount)
-	return syncedCount, nil
+	return int(syncedCount), nil
 }
 
 // CreateMovie adds a new movie manually

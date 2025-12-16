@@ -27,7 +27,21 @@ func SyncWithAPI() error {
 			CreatedAt:   m.CreatedAt,
 			UpdatedAt:   time.Now(),
 		}
-		repository.CreateOrUpdateMovie(movie)
+
+		existingMovie, err := repository.GetMovieByTitleAndDate(m.Title, releaseDate)
+
+		if err == nil && existingMovie != nil {
+			// Movie exists, update it
+			movie.ID = existingMovie.ID
+			err = repository.UpdateMovie(&movie)
+		} else {
+			// Movie doesn't exist, create it
+			err = repository.CreateMovie(&movie)
+		}
+
+		if err != nil {
+			return fmt.Errorf("failed to sync movie %s: %v", m.Title, err)
+		}
 	}
 
 	return nil
